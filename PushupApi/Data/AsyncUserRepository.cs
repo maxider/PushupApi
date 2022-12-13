@@ -3,6 +3,7 @@ using LiteDB;
 using PushupApi.Models;
 using PushupApi.Models.Helpers;
 using Zio;
+using BsonMapper = UltraLiteDB.BsonMapper;
 
 namespace PushupApi.Data;
 
@@ -14,6 +15,8 @@ public class BaseDbConnector {
         var file = dbFile ?? curFolder.CreateSubdirectory("./Database").GetChild("Database.db");
         ConnectionString = new ConnectionString(file.GetFullFileSystemPath());
     }
+
+    public LiteDatabase Connect() => new LiteDatabase(ConnectionString);
 }
 
 public class AsyncUserRepository : BaseDbConnector, IAsyncRepository<User> {
@@ -28,31 +31,44 @@ public class AsyncUserRepository : BaseDbConnector, IAsyncRepository<User> {
     public async Task<User> GetById(int id) {
         using var db = new LiteDatabase(ConnectionString);
         var collection = db.GetCollection<User>(USERS_COLLECTION);
-        var user = await Task.Run(() => collection.FindById(id));
-        if (user == null)
-            throw new EntryNotFoundException();
+        var user = await Task.Run(() => IncludePrefix(collection).FindById(id));
         return user;
     }
 
     public async Task<IEnumerable<User>> GetAll() {
         using var db = new LiteDatabase(ConnectionString);
         var collection = db.GetCollection<User>(USERS_COLLECTION);
-        return await Task.Run(() => collection.FindAll());
+        return await Task.Run(() => IncludePrefix(collection).FindAll());
     }
 
-    public Task<bool> ContainsById(int id) => throw new NotImplementedException();
-
-    public async Task<User> Insert(User user) {
+    public Task<bool> ContainsById(int id) {
         using var db = new LiteDatabase(ConnectionString);
         var collection = db.GetCollection<User>(USERS_COLLECTION);
-        await Task.Run(() => collection.Insert(user));
-        return user;
+        return Task.Run(() => IncludePrefix(collection).Exists(u => u.ID == id));
     }
 
-    public async Task<User> Update(User user) {
+    public async Task<User> Insert(User entity) {
         using var db = new LiteDatabase(ConnectionString);
         var collection = db.GetCollection<User>(USERS_COLLECTION);
-        await Task.Run(() => collection.Update(user));
-        return user;
+        await Task.Run(() => {
+            IncludePrefix(collection).Insert(entity);
+            return Task.CompletedTask;
+        });
+        return entity;
+    }
+
+    public async Task<bool> Update(User entity) {
+        using var db = new LiteDatabase(ConnectionString);
+        var collection = db.GetCollection<User>(USERS_COLLECTION);
+        bool update = false;
+        await Task.Run(() => {
+            update = IncludePrefix(collection).Update(entity);
+            return Task.CompletedTask;
+        });
+        return update;
+    }
+
+    private static ILiteCollection<User> IncludePrefix(ILiteCollection<User> collection) {
+        return collection.Include(u => u.CurrentPlan).Include(u => u.CurrentPlan.Days);
     }
 }
